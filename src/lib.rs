@@ -1,11 +1,12 @@
-use std::default;
-use std::fmt::{Debug, Display};
+use core::panic;
+use std::fmt::Display;
+use std::vec;
 
-use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
-use near_contract_standards::fungible_token::FungibleToken;
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use itertools::Itertools;
+use near_contract_standards::fungible_token::{metadata::FungibleTokenMetadata, FungibleToken};
+use near_sdk::borsh::{self, de, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedMap};
-use near_sdk::{env, near_bindgen, AccountId, Balance, PanicOnDefault, Promise};
+use near_sdk::{env, near_bindgen, AccountId, Balance, PanicOnDefault};
 
 #[near_bindgen]
 #[derive(PanicOnDefault, BorshDeserialize, BorshSerialize)]
@@ -17,12 +18,27 @@ pub struct AMM {
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct TickerInfo {
-    pub rate: TokenRate,
-    pub percentage: u128,
+    pub ratio_direction: TokenRate,
+    pub percentage: f64,
+    pub ratio: f64,
+}
+impl TickerInfo {
+    fn update(&mut self, ratio: f64) {
+        (self.ratio, self.ratio_direction, self.percentage) = match ratio.total_cmp(&self.ratio) {
+            std::cmp::Ordering::Equal => (ratio, TokenRate::Unchanged, 0.0),
+            std::cmp::Ordering::Less => (ratio, TokenRate::Decreased, self.ratio / ratio),
+            std::cmp::Ordering::Greater => (ratio, TokenRate::Increased, ratio / self.ratio),
+        }
+    }
 }
 impl Display for TickerInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        let direction_symbol = match self.ratio_direction {
+            TokenRate::Unchanged => "=",
+            TokenRate::Decreased => "v",
+            TokenRate::Increased => "^",
+        };
+        write!(f, "({}, {})", direction_symbol, self.percentage)
     }
 }
 
@@ -30,8 +46,8 @@ impl Display for TickerInfo {
 pub enum TokenRate {
     #[default]
     Unchanged,
-    Increase,
-    Decrease,
+    Increased,
+    Decreased,
 }
 
 // why do we need an onwer as a param? we could've just call
@@ -82,6 +98,7 @@ impl AMM {
 
         let x = sell_token.0.internal_unwrap_balance_of(pool_owner_id);
         let y = buy_token.0.internal_unwrap_balance_of(pool_owner_id);
+
         let k = x * y;
 
         sell_token
@@ -98,6 +115,10 @@ impl AMM {
 
         self.tokens.insert(&buy_token_addr, &buy_token);
         self.tokens.insert(&sell_token_addr, &sell_token);
+
+        let new_ratio = buy_token.0.total_supply as f64 / sell_token.0.total_supply as f64;
+        sell_token.2.update(new_ratio);
+        buy_token.2.update(new_ratio);
     }
 
     pub fn deposit(
@@ -135,6 +156,30 @@ pub fn create_token(account_id: &AccountId, prefix: Vec<u8>) -> FungibleToken {
     token
 }
 
+pub fn token_to_yocto(token_amount: &str) -> u128 {
+    let mut vec_over_amount = token_amount.split('.').collect::<Vec<&str>>();
+    if vec_over_amount.get(1).is_none() {
+        vec_over_amount.push("0")
+    };
+
+    let (integer_part, decimal_part) = vec_over_amount
+        .iter()
+        .map(|x| x.parse::<u128>().unwrap_or(0))
+        .collect_tuple()
+        .unwrap();
+
+    println!("{:?} {:?}", integer_part, decimal_part);
+
+    {
+        let int_part = integer_part * 10u128.pow(24);
+        let decimal_part = {
+            let amount_of_decimals = decimal_part.to_string().len() as u32;
+            decimal_part * 10u128.pow(24 - amount_of_decimals)
+        };
+        int_part + decimal_part
+    }
+}
+
 /*
  * the rest of this file sets up unit tests
  * to run these, the command will be:
@@ -146,16 +191,17 @@ pub fn create_token(account_id: &AccountId, prefix: Vec<u8>) -> FungibleToken {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use near_sdk::test_utils::{get_logs, VMContextBuilder};
-    use near_sdk::{testing_env, AccountId};
 
-    // part of writing unit tests is setting up a mock context
-    // provide a `predecessor` here, it'll modify the default context
-    fn get_context(predecessor: AccountId) -> VMContextBuilder {
-        let mut builder = VMContextBuilder::new();
-        builder.predecessor_account_id(predecessor);
-        builder
+    #[test]
+    fn test_conversion_whole_numbers() {
+        assert_eq!(token_to_yocto("50"), 50 * 10u128.pow(24))
     }
 
-    // TESTS HERE
+    #[test]
+    fn test_conversion_with_decimals() {
+        let whole_part = 265 * 10u128.pow(24);
+        let decimal_part = 555 * 10u128.pow(24 - 3);
+
+        assert_eq!(token_to_yocto("265.555"), whole_part + decimal_part)
+    }
 }
