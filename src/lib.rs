@@ -180,14 +180,6 @@ pub fn token_to_yocto(token_amount: &str) -> u128 {
     }
 }
 
-/*
- * the rest of this file sets up unit tests
- * to run these, the command will be:
- * cargo test --package rust-template -- --nocapture
- * Note: 'rust-template' comes from Cargo.toml's 'name' key
- */
-
-// use the attribute below for unit tests
 #[cfg(test)]
 mod tests {
     use super::*;
