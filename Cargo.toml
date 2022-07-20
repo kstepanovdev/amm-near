@@ -5,11 +5,11 @@ authors = ["Kyrylo Stepanov <k.stepanov@tutannota.com>"]
 edition = "2018"
 
 [dependencies]
-near-sdk = "4.0.0"
-near-contract-standards = "4.0.0"
+near-sdk = "4.0.0-pre.7"
+near-contract-standards = "4.0.0-pre.7"
 
 [dev-dependencies]
-near-sdk-sim = "3.2.0"
+near-sdk-sim = "4.0.0-pre.7"
 fungible-token = { path = "./ft" }
 amm = { path = "./amm" }
 
