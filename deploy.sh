@@ -44,4 +44,4 @@ near call amm.$ID new '{
     "owner_id": "amm.'$ID'",
     "a_contract": "token_a.'$ID'",
     "b_contract": "token_b.'$ID'"
-}' --accountId amm.$ID;
+}' --accountId amm.$ID --gas 100000000000000;
