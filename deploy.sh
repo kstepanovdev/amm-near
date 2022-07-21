@@ -26,9 +26,9 @@ near call token_a.$ID storage_deposit '{"account_id": "alice.'$ID'"}' --accountI
 near call token_a.$ID storage_deposit '{"account_id": "amm.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
 near call token_a.$ID storage_deposit '{"account_id": "bob.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
 
-#near call token_b.$ID storage_deposit '{"account_id": "alice.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
-#near call token_b.$ID storage_deposit '{"account_id": "amm.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
-#near call token_b.$ID storage_deposit '{"account_id": "bob.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
+near call token_b.$ID storage_deposit '{"account_id": "alice.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
+near call token_b.$ID storage_deposit '{"account_id": "amm.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
+near call token_b.$ID storage_deposit '{"account_id": "bob.'$ID'"}' --accountId $ID --deposit 1 --gas 300000000000000;
 
 #send some A tokens to Alice and Bob
 near call token_a.$ID ft_transfer '{"receiver_id": "alice.'$ID'", "amount": "50000"}' --accountId token_a.$ID --depositYocto 1;
