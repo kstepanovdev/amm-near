@@ -1,12 +1,14 @@
+use std::thread::panicking;
 use std::vec;
 
 use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::json_types::U128;
-use near_sdk::{env, ext_contract, near_bindgen, AccountId, Gas, PanicOnDefault, Promise};
+use near_sdk::{env, ext_contract, near_bindgen, AccountId, Balance, Gas, PanicOnDefault, Promise};
 
 pub const GAS: Gas = Gas(5_000_000_000_000);
+const MIN_STORAGE: Balance = 1_000_000_000_000_000_000_000;
 
 #[near_bindgen]
 #[derive(PanicOnDefault, BorshDeserialize, BorshSerialize)]
@@ -61,6 +63,8 @@ pub enum TokenRate {
 trait Contract {
     fn ft_metadata(&self) -> Promise;
     fn ft_balance_of(&self, account_id: AccountId) -> Promise;
+    fn ft_transfer(&self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+    fn storage_deposit(&self, account_id: AccountId, registration_only: bool);
 }
 
 #[near_bindgen]
@@ -89,12 +93,20 @@ impl AMM {
         };
         self.tokens.insert(account_id, &token_info);
     }
+
+    #[private]
+    pub fn ft_deposit_callback(&mut self) {}
 }
 
 #[near_bindgen]
 impl AMM {
     #[init]
     pub fn new(owner_id: AccountId, a_contract: AccountId, b_contract: AccountId) -> Self {
+        // create AMM account for owner to store the pool, then create wallets A and B for that account
+        ext_ft::ext(a_contract)
+            .storage_deposit(env::current_account_id(), false)
+            .then(ext_ft::ext(b_contract).storage_deposit(env::current_account_id(), false));
+
         let mut tokens = UnorderedMap::new(b"t");
         tokens.insert(&a_contract, &TokenInfo::default());
         tokens.insert(&b_contract, &TokenInfo::default());
@@ -121,19 +133,18 @@ impl AMM {
     fn update_tokens_ratio(&mut self) {
         for (token_addr, _info) in self.tokens.iter() {
             ext_ft::ext(token_addr.clone())
-                .ft_balance_of(token_addr.clone())
-                .then(Self::ext(env::predecessor_account_id()).ft_balance_of_callback(&token_addr));
+                .ft_balance_of(env::current_account_id())
+                .then(Self::ext(token_addr).ft_balance_of_callback(&token_addr));
         }
 
-        let mut ratio = 0.0;
+        self.tokens_ratio = 0.0;
         for (_token_addr, info) in self.tokens.iter() {
-            if ratio == 0.0 {
-                ratio = info.balance as f64;
+            if self.tokens_ratio == 0.0 {
+                self.tokens_ratio = info.balance as f64;
             } else {
-                ratio = ratio as f64 / info.balance as f64;
+                self.tokens_ratio = self.tokens_ratio as f64 / info.balance as f64;
             }
         }
-        self.tokens_ratio = ratio;
     }
 
     pub fn info(&self) -> String {
@@ -152,18 +163,23 @@ impl AMM {
     }
 
     // pub fn swap(&mut self, buy_token_addr: AccountId, sell_token_addr: AccountId, amount: u128) {
-    //     let mut buy_token = self
-    //         .tokens
-    //         .get(&buy_token_addr)
-    //         .expect("Token not supported");
-    //     let mut sell_token = self
-    //         .tokens
-    //         .get(&sell_token_addr)
-    //         .expect("Token not supported");
-    //     let pool_owner_id = &self.owner_id;
-    //     let user_account_id = env::predecessor_account_id();
+    //     // basic error handling
+    //     if buy_token_addr.eq(&sell_token_addr) {
+    //         panic!("Tokens for swap must be different")
+    //     }
+    //     if amount <= 0 {
+    //         panic!("Requested amount for sell must be greater than 0")
+    //     }
+    //     for token in [buy_token_addr, sell_token_addr] {
+    //         if let None = self.tokens.get(&token) {
+    //             panic!("Token {} is not supported", token.as_str())
+    //         }
+    //     }
 
-    //     let x = sell_token.0.internal_unwrap_balance_of(pool_owner_id);
+    //     // ext_ft::ext(token_addr)
+    //             // .ft_transfer(self.pool_id, U128(amount), None);
+
+    //     let x = sell_token_addr.internal_unwrap_balance_of(pool_owner_id);
     //     let y = buy_token.0.internal_unwrap_balance_of(pool_owner_id);
 
     //     let k = x * y;
@@ -172,7 +188,6 @@ impl AMM {
     //         .0
     //         .internal_transfer(&user_account_id, pool_owner_id, amount, None);
 
-    //     // operations with a floating pointer won't be implemented due to my lack of experience of such operations
     //     // y - (k / (x + dx))
     //     let buy_amount = y - (k / (x + amount));
 
@@ -180,41 +195,17 @@ impl AMM {
     //         .0
     //         .internal_transfer(pool_owner_id, &user_account_id, buy_amount, None);
 
-    //     self.tokens.insert(&buy_token_addr, &buy_token);
-    //     self.tokens.insert(&sell_token_addr, &sell_token);
-
-    //     let new_ratio = buy_token.0.total_supply as f64 / sell_token.0.total_supply as f64;
-    //     sell_token.2.update(new_ratio);
-    //     buy_token.2.update(new_ratio);
     // }
 
-    // pub fn deposit(
-    //     &mut self,
-    //     token_a_addr: AccountId,
-    //     token_b_addr: AccountId,
-    //     amount_a: u128,
-    //     amount_b: u128,
-    // ) {
-    //     assert_eq!(
-    //         env::predecessor_account_id(),
-    //         self.owner_id,
-    //         "Only the owner may call this method"
-    //     );
-
-    //     let payer = env::predecessor_account_id();
-
-    //     let mut token_a = self.tokens.get(&token_a_addr).expect("Token not supported");
-    //     let mut token_b = self.tokens.get(&token_b_addr).expect("Token not supported");
-    //     token_a
-    //         .0
-    //         .internal_transfer(&payer, &self.owner_id, amount_a, None);
-    //     token_b
-    //         .0
-    //         .internal_transfer(&payer, &self.owner_id, amount_b, None);
-
-    //     self.tokens.insert(&token_a_addr, &token_a);
-    //     self.tokens.insert(&token_b_addr, &token_b);
-    // }
+    pub fn deposit(&mut self, token_addr: AccountId, amount: u128) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.owner_id,
+            "Only the owner of the contract can call this method"
+        );
+        ext_ft::ext(token_addr).ft_transfer(env::current_account_id(), U128(amount), None);
+        self.update_tokens_ratio();
+    }
 }
 
 #[cfg(test)]
