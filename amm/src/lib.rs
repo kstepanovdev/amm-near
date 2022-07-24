@@ -2,6 +2,7 @@ use std::thread::panicking;
 use std::vec;
 
 use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
+use near_contract_standards::non_fungible_token::Token;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::json_types::U128;
@@ -103,9 +104,11 @@ impl AMM {
     #[init]
     pub fn new(owner_id: AccountId, a_contract: AccountId, b_contract: AccountId) -> Self {
         // create AMM account for owner to store the pool, then create wallets A and B for that account
-        ext_ft::ext(a_contract)
+        ext_ft::ext(a_contract.clone())
             .storage_deposit(env::current_account_id(), false)
-            .then(ext_ft::ext(b_contract).storage_deposit(env::current_account_id(), false));
+            .then(
+                ext_ft::ext(b_contract.clone()).storage_deposit(env::current_account_id(), false),
+            );
 
         let mut tokens = UnorderedMap::new(b"t");
         tokens.insert(&a_contract, &TokenInfo::default());
@@ -134,7 +137,7 @@ impl AMM {
         for (token_addr, _info) in self.tokens.iter() {
             ext_ft::ext(token_addr.clone())
                 .ft_balance_of(env::current_account_id())
-                .then(Self::ext(token_addr).ft_balance_of_callback(&token_addr));
+                .then(Self::ext(token_addr.clone()).ft_balance_of_callback(&token_addr));
         }
 
         self.tokens_ratio = 0.0;
@@ -162,40 +165,46 @@ impl AMM {
         res
     }
 
-    // pub fn swap(&mut self, buy_token_addr: AccountId, sell_token_addr: AccountId, amount: u128) {
-    //     // basic error handling
-    //     if buy_token_addr.eq(&sell_token_addr) {
-    //         panic!("Tokens for swap must be different")
-    //     }
-    //     if amount <= 0 {
-    //         panic!("Requested amount for sell must be greater than 0")
-    //     }
-    //     for token in [buy_token_addr, sell_token_addr] {
-    //         if let None = self.tokens.get(&token) {
-    //             panic!("Token {} is not supported", token.as_str())
-    //         }
-    //     }
+    pub fn swap(&mut self, buy_token_addr: AccountId, sell_token_addr: AccountId, amount: u128) {
+        // basic error handling
+        if buy_token_addr.eq(&sell_token_addr) {
+            panic!("Tokens for swap must be different")
+        }
+        if amount == 0 {
+            panic!("Requested amount for sell must be greater than 0")
+        }
+        for token in [&buy_token_addr, &sell_token_addr] {
+            if self.tokens.get(token).is_none() {
+                panic!("Token {} is not supported", token.as_str())
+            }
+        }
 
-    //     // ext_ft::ext(token_addr)
-    //             // .ft_transfer(self.pool_id, U128(amount), None);
+        // fill the pool
+        ext_ft::ext(sell_token_addr.clone()).ft_transfer(
+            env::current_account_id(),
+            U128(amount),
+            None,
+        );
+        // get balances and convert amounts to the same number of decimals
+        let TokenInfo {
+            name: _,
+            decimals,
+            balance,
+        } = self.tokens.get(&sell_token_addr).unwrap();
+        let x = balance / 10_u128.pow(decimals as u32);
+        let TokenInfo {
+            name: _,
+            decimals,
+            balance,
+        } = self.tokens.get(&buy_token_addr).unwrap();
+        let y = balance / 10_u128.pow(decimals as u32);
+        let k = x * y;
 
-    //     let x = sell_token_addr.internal_unwrap_balance_of(pool_owner_id);
-    //     let y = buy_token.0.internal_unwrap_balance_of(pool_owner_id);
-
-    //     let k = x * y;
-
-    //     sell_token
-    //         .0
-    //         .internal_transfer(&user_account_id, pool_owner_id, amount, None);
-
-    //     // y - (k / (x + dx))
-    //     let buy_amount = y - (k / (x + amount));
-
-    //     buy_token
-    //         .0
-    //         .internal_transfer(pool_owner_id, &user_account_id, buy_amount, None);
-
-    // }
+        // y - (k / (x + dx))
+        let buy_amount = U128(y - (k / (x + amount)));
+        // transfer buy_token to initializer of swap operation
+        ext_ft::ext(sell_token_addr).ft_transfer(env::current_account_id(), buy_amount, None);
+    }
 
     pub fn deposit(&mut self, token_addr: AccountId, amount: u128) {
         assert_eq!(
