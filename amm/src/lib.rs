@@ -192,6 +192,7 @@ impl AMM {
             balance,
         } = self.tokens.get(&sell_token_addr).unwrap();
         let x = balance / 10_u128.pow(decimals as u32);
+
         let TokenInfo {
             name: _,
             decimals,
@@ -200,8 +201,9 @@ impl AMM {
         let y = balance / 10_u128.pow(decimals as u32);
         let k = x * y;
 
-        // y - (k / (x + dx))
-        let buy_amount = U128(y - (k / (x + amount)));
+        // y - (k / (x + dx)). Then return decimals.
+        let buy_amount = U128(y - (k / (x + amount)) * 10_u128.pow(decimals as u32));
+
         // transfer buy_token to initializer of swap operation
         ext_ft::ext(sell_token_addr).ft_transfer(env::current_account_id(), buy_amount, None);
     }
