@@ -1,15 +1,15 @@
-use std::thread::panicking;
 use std::vec;
 
 use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
-use near_contract_standards::non_fungible_token::Token;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::json_types::U128;
-use near_sdk::{env, ext_contract, near_bindgen, AccountId, Balance, Gas, PanicOnDefault, Promise};
+use near_sdk::{
+    env, ext_contract, log, near_bindgen, AccountId, Balance, Gas, PanicOnDefault, Promise,
+};
 
-pub const GAS: Gas = Gas(5_000_000_000_000);
-const MIN_STORAGE: Balance = 1_000_000_000_000_000_000_000;
+pub const GAS: Gas = Gas(300_000_000_000_000);
+const MIN_STORAGE: Balance = 1_000_000_000_000_000_000_000_000;
 
 #[near_bindgen]
 #[derive(PanicOnDefault, BorshDeserialize, BorshSerialize)]
@@ -64,8 +64,8 @@ pub enum TokenRate {
 trait Contract {
     fn ft_metadata(&self) -> Promise;
     fn ft_balance_of(&self, account_id: AccountId) -> Promise;
-    fn ft_transfer(&self, receiver_id: AccountId, amount: U128, memo: Option<String>);
-    fn storage_deposit(&self, account_id: AccountId, registration_only: bool);
+    fn ft_transfer(&self, receiver_id: AccountId, amount: U128, memo: Option<String>) -> Promise;
+    fn storage_deposit(&self, account_id: AccountId, registration_only: bool) -> Promise;
 }
 
 #[near_bindgen]
@@ -76,7 +76,10 @@ impl AMM {
         account_id: &AccountId,
         #[callback_unwrap] balance: U128,
     ) {
-        let mut token_info = self.tokens.get(account_id).unwrap();
+        let mut token_info = self
+            .tokens
+            .get(account_id)
+            .unwrap_or_else(|| panic!("The token {}, is not supported", account_id));
         token_info.balance = u128::from(balance);
         self.tokens.insert(account_id, &token_info);
     }
@@ -94,21 +97,20 @@ impl AMM {
         };
         self.tokens.insert(account_id, &token_info);
     }
-
-    #[private]
-    pub fn ft_deposit_callback(&mut self) {}
 }
 
 #[near_bindgen]
 impl AMM {
     #[init]
     pub fn new(owner_id: AccountId, a_contract: AccountId, b_contract: AccountId) -> Self {
-        // create AMM account for owner to store the pool, then create wallets A and B for that account
+        // create wallets A and B for the current account
         ext_ft::ext(a_contract.clone())
-            .storage_deposit(env::current_account_id(), false)
-            .then(
-                ext_ft::ext(b_contract.clone()).storage_deposit(env::current_account_id(), false),
-            );
+            .with_attached_deposit(MIN_STORAGE)
+            .storage_deposit(env::current_account_id(), false);
+
+        ext_ft::ext(b_contract.clone())
+            .with_attached_deposit(MIN_STORAGE)
+            .storage_deposit(env::current_account_id(), false);
 
         let mut tokens = UnorderedMap::new(b"t");
         tokens.insert(&a_contract, &TokenInfo::default());
@@ -120,7 +122,6 @@ impl AMM {
             tokens_ratio: 0.0,
         };
         this.update_meta();
-        this.update_tokens_ratio();
         this
     }
 
@@ -129,7 +130,7 @@ impl AMM {
             // call cross-contract function on Token's contract to get metadata
             ext_ft::ext(token_addr.clone())
                 .ft_metadata()
-                .then(Self::ext(env::predecessor_account_id()).ft_metadata_callback(&token_addr));
+                .then(Self::ext(env::current_account_id()).ft_metadata_callback(&token_addr));
         }
     }
 
@@ -137,7 +138,7 @@ impl AMM {
         for (token_addr, _info) in self.tokens.iter() {
             ext_ft::ext(token_addr.clone())
                 .ft_balance_of(env::current_account_id())
-                .then(Self::ext(token_addr.clone()).ft_balance_of_callback(&token_addr));
+                .then(Self::ext(env::current_account_id()).ft_balance_of_callback(&token_addr));
         }
 
         self.tokens_ratio = 0.0;
@@ -148,6 +149,18 @@ impl AMM {
                 self.tokens_ratio = self.tokens_ratio as f64 / info.balance as f64;
             }
         }
+    }
+
+    pub fn deposit(&mut self, token_addr: AccountId, amount: U128) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.owner_id,
+            "Only the owner of the contract can call this method"
+        );
+
+        ext_ft::ext(token_addr)
+            .with_attached_deposit(1)
+            .ft_transfer(env::current_account_id(), amount, None);
     }
 
     pub fn info(&self) -> String {
@@ -180,11 +193,9 @@ impl AMM {
         }
 
         // fill the pool
-        ext_ft::ext(sell_token_addr.clone()).ft_transfer(
-            env::current_account_id(),
-            U128(amount),
-            None,
-        );
+        ext_ft::ext(sell_token_addr.clone())
+            .with_attached_deposit(1)
+            .ft_transfer(env::current_account_id(), U128(amount), None);
         // get balances and convert amounts to the same number of decimals
         let TokenInfo {
             name: _,
@@ -205,17 +216,9 @@ impl AMM {
         let buy_amount = U128(y - (k / (x + amount)) * 10_u128.pow(decimals as u32));
 
         // transfer buy_token to initializer of swap operation
-        ext_ft::ext(sell_token_addr).ft_transfer(env::current_account_id(), buy_amount, None);
-    }
-
-    pub fn deposit(&mut self, token_addr: AccountId, amount: u128) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.owner_id,
-            "Only the owner of the contract can call this method"
-        );
-        ext_ft::ext(token_addr).ft_transfer(env::current_account_id(), U128(amount), None);
-        self.update_tokens_ratio();
+        ext_ft::ext(sell_token_addr)
+            .with_attached_deposit(1)
+            .ft_transfer(env::current_account_id(), buy_amount, None);
     }
 }
 
