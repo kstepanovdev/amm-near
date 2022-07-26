@@ -1,11 +1,14 @@
 use std::vec;
 
 use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
+use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::json_types::U128;
+use near_sdk::serde_json::{self, json};
 use near_sdk::{
     env, ext_contract, log, near_bindgen, AccountId, Balance, Gas, PanicOnDefault, Promise,
+    PromiseOrValue,
 };
 
 pub const GAS: Gas = Gas(300_000_000_000_000);
@@ -151,18 +154,6 @@ impl AMM {
         }
     }
 
-    pub fn deposit(&mut self, token_addr: AccountId, amount: U128) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.owner_id,
-            "Only the owner of the contract can call this method"
-        );
-
-        ext_ft::ext(token_addr)
-            .with_attached_deposit(1)
-            .ft_transfer(env::current_account_id(), amount, None);
-    }
-
     pub fn info(&self) -> String {
         let mut res = "".to_string();
         for (token_addr, token_info) in &self.tokens {
@@ -219,6 +210,29 @@ impl AMM {
         ext_ft::ext(sell_token_addr)
             .with_attached_deposit(1)
             .ft_transfer(env::current_account_id(), buy_amount, None);
+    }
+}
+
+#[near_bindgen]
+impl FungibleTokenReceiver for AMM {
+    fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        if sender_id == self.owner_id {
+            log!(
+                "OWNER IS CALLLING. OBEY. AMOUNT: {:?}. MSG: {:?}",
+                amount,
+                msg
+            );
+            // call deposit
+        } else {
+            log!("JUST CHILL, BOI. AMOUNT: {:?}. MSG: {:?}", amount, msg);
+            // call swap
+        }
+        PromiseOrValue::Value(U128::from(0_u128))
     }
 }
 
