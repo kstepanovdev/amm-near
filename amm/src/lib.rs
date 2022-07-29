@@ -20,6 +20,7 @@ pub struct AMM {
     pub owner_id: AccountId,
     pub tokens: UnorderedMap<AccountId, TokenInfo>,
     pub tokens_ratio: f64,
+    pub k: u128,
 }
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
@@ -66,8 +67,8 @@ pub enum TokenRate {
 #[ext_contract(ext_ft)]
 trait Contract {
     fn ft_metadata(&self) -> Promise;
+    fn ft_transfer(&self, receiver: AccountId, amount: U128, memo: Option<String>) -> Promise;
     fn ft_balance_of(&self, account_id: AccountId) -> Promise;
-    fn ft_transfer(&self, receiver_id: AccountId, amount: U128, memo: Option<String>) -> Promise;
     fn storage_deposit(&self, account_id: AccountId, registration_only: bool) -> Promise;
 }
 
@@ -106,11 +107,11 @@ impl AMM {
 impl AMM {
     #[init]
     pub fn new(owner_id: AccountId, a_contract: AccountId, b_contract: AccountId) -> Self {
-        // create wallets A and B for the current account
+        // create wallet A for the AMM's account
         ext_ft::ext(a_contract.clone())
             .with_attached_deposit(MIN_STORAGE)
             .storage_deposit(env::current_account_id(), false);
-
+        // create wallet B for the AMM's account
         ext_ft::ext(b_contract.clone())
             .with_attached_deposit(MIN_STORAGE)
             .storage_deposit(env::current_account_id(), false);
@@ -123,12 +124,13 @@ impl AMM {
             owner_id,
             tokens,
             tokens_ratio: 0.0,
+            k: 0,
         };
-        this.update_meta();
+        this.get_metadata();
         this
     }
 
-    fn update_meta(&mut self) {
+    fn get_metadata(&mut self) {
         for (token_addr, _info) in self.tokens.iter() {
             // call cross-contract function on Token's contract to get metadata
             ext_ft::ext(token_addr.clone())
@@ -138,12 +140,6 @@ impl AMM {
     }
 
     fn update_tokens_ratio(&mut self) {
-        for (token_addr, _info) in self.tokens.iter() {
-            ext_ft::ext(token_addr.clone())
-                .ft_balance_of(env::current_account_id())
-                .then(Self::ext(env::current_account_id()).ft_balance_of_callback(&token_addr));
-        }
-
         self.tokens_ratio = 0.0;
         for (_token_addr, info) in self.tokens.iter() {
             if self.tokens_ratio == 0.0 {
@@ -159,7 +155,7 @@ impl AMM {
         for (token_addr, token_info) in &self.tokens {
             res.push_str(
                 format!(
-                    "Token address: {}. Token name: {}. Decimals: {}. Ticker: TBD. Balance: {}; ",
+                    "Token address: {}. Token name: {}. Decimals: {}. Ticker: TBD. Balance: {:?}; ",
                     token_addr, token_info.name, token_info.decimals, token_info.balance
                 )
                 .as_str(),
@@ -167,49 +163,6 @@ impl AMM {
         }
         res.push_str(format!("Tokens ratio: {}", self.tokens_ratio).as_str());
         res
-    }
-
-    pub fn swap(&mut self, buy_token_addr: AccountId, sell_token_addr: AccountId, amount: u128) {
-        // basic error handling
-        if buy_token_addr.eq(&sell_token_addr) {
-            panic!("Tokens for swap must be different")
-        }
-        if amount == 0 {
-            panic!("Requested amount for sell must be greater than 0")
-        }
-        for token in [&buy_token_addr, &sell_token_addr] {
-            if self.tokens.get(token).is_none() {
-                panic!("Token {} is not supported", token.as_str())
-            }
-        }
-
-        // fill the pool
-        ext_ft::ext(sell_token_addr.clone())
-            .with_attached_deposit(1)
-            .ft_transfer(env::current_account_id(), U128(amount), None);
-        // get balances and convert amounts to the same number of decimals
-        let TokenInfo {
-            name: _,
-            decimals,
-            balance,
-        } = self.tokens.get(&sell_token_addr).unwrap();
-        let x = balance / 10_u128.pow(decimals as u32);
-
-        let TokenInfo {
-            name: _,
-            decimals,
-            balance,
-        } = self.tokens.get(&buy_token_addr).unwrap();
-        let y = balance / 10_u128.pow(decimals as u32);
-        let k = x * y;
-
-        // y - (k / (x + dx)). Then return decimals.
-        let buy_amount = U128(y - (k / (x + amount)) * 10_u128.pow(decimals as u32));
-
-        // transfer buy_token to initializer of swap operation
-        ext_ft::ext(sell_token_addr)
-            .with_attached_deposit(1)
-            .ft_transfer(env::current_account_id(), buy_amount, None);
     }
 }
 
@@ -221,16 +174,64 @@ impl FungibleTokenReceiver for AMM {
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
+        let amount = u128::from(amount);
+
+        // Get tokens' accounts.
+        let buy_token = AccountId::new_unchecked(msg);
+        let sell_token = loop {
+            if let Some(token_id) = self.tokens.keys().next() {
+                if token_id != buy_token {
+                    break token_id;
+                }
+            } else {
+                panic!("Second token account cannot be found")
+            }
+        };
+
         if sender_id == self.owner_id {
-            log!(
-                "OWNER IS CALLLING. OBEY. AMOUNT: {:?}. MSG: {:?}",
-                amount,
-                msg
-            );
-            // call deposit
+            let sell_token_balance = self.tokens.get(&sell_token).unwrap().balance + amount;
+            let buy_token_balance = self.tokens.get(&buy_token).unwrap().balance;
+
+            self.tokens.get(&sell_token).unwrap().balance = sell_token_balance;
+            self.k = buy_token_balance * sell_token_balance;
         } else {
-            log!("JUST CHILL, BOI. AMOUNT: {:?}. MSG: {:?}", amount, msg);
-            // call swap
+            // (x + a)(y - b) = xy
+            // x = sell_token_balance, y = buy_token_balance, a = amount, b = unknown var
+            // b = ya / (x + a)
+            // b = buy_token * amount / (x + amount)
+
+            // Thus,
+            // buy_token_balance -= b
+            // sell_token_balance += amount
+            // k aka xy remains the same
+
+            let TokenInfo {
+                name: _,
+                decimals: _,
+                balance,
+            } = self.tokens.get(&sell_token).unwrap();
+            let x = balance;
+
+            let TokenInfo {
+                name: _,
+                decimals: _,
+                balance,
+            } = self.tokens.get(&buy_token).unwrap();
+            let y = balance;
+
+            // y - (k / (x + dx)). Then return decimals.
+            let b = (amount * y) / (amount + x);
+
+            // update balances
+            self.tokens.get(&sell_token).unwrap().balance += amount;
+            self.tokens.get(&buy_token).unwrap().balance -= b;
+
+            // transfer buy_token to initializer of swap operation
+            ext_ft::ext(buy_token).with_attached_deposit(1).ft_transfer(
+                sender_id,
+                U128::from(b),
+                None,
+            );
         }
         PromiseOrValue::Value(U128::from(0_u128))
     }
