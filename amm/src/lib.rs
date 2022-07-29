@@ -165,29 +165,22 @@ impl FungibleTokenReceiver for AMM {
         let amount = u128::from(amount);
 
         // Get tokens' accounts.
-        let buy_token = AccountId::new_unchecked(msg);
-        let sell_token = loop {
-            match self.tokens.iter().next() {
-                Some((token_id, _token_info)) => {
-                    if token_id != buy_token {
-                        break token_id;
-                    }
-                }
-                None => {
-                    panic!("Second token account cannot be found")
-                }
-            }
-        };
+        let accounts = msg
+            .split(';')
+            .map(|x| AccountId::new_unchecked(x.to_string()))
+            .collect::<Vec<AccountId>>();
+        let sell_token = &accounts[0];
+        let buy_token = &accounts[1];
 
-        let mut sell_token_info = self.tokens.get(&sell_token).unwrap();
-        let mut buy_token_info = self.tokens.get(&buy_token).unwrap();
+        let mut sell_token_info = self.tokens.get(sell_token).unwrap();
+        let mut buy_token_info = self.tokens.get(buy_token).unwrap();
 
         if sender_id == self.owner_id {
             sell_token_info.balance += amount;
             let buy_token_balance = buy_token_info.balance;
             self.k = buy_token_balance * sell_token_info.balance;
 
-            self.tokens.insert(&sell_token, &sell_token_info);
+            self.tokens.insert(sell_token, &sell_token_info);
         } else {
             // (x + a)(y - b) = xy
             // x = sell_token_balance, y = buy_token_balance, a = amount, b = unknown var
@@ -208,15 +201,13 @@ impl FungibleTokenReceiver for AMM {
             // update balances
             sell_token_info.balance += amount;
             buy_token_info.balance -= b;
-            self.tokens.insert(&sell_token, &sell_token_info);
-            self.tokens.insert(&buy_token, &buy_token_info);
+            self.tokens.insert(sell_token, &sell_token_info);
+            self.tokens.insert(buy_token, &buy_token_info);
 
             // transfer buy_token to initializer of swap operation
-            ext_ft::ext(buy_token).with_attached_deposit(1).ft_transfer(
-                sender_id,
-                U128::from(b),
-                None,
-            );
+            ext_ft::ext(buy_token.clone())
+                .with_attached_deposit(1)
+                .ft_transfer(sender_id, U128::from(b), None);
         }
         PromiseOrValue::Value(U128::from(0_u128))
     }
