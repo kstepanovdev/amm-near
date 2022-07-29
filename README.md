@@ -14,6 +14,8 @@ The simplest way to deploy the contract is using a deploy.sh script. It contains
 3. Don't forget to refill created wallets with some amount of tokens. It's not necessary, but helpful.
 4. Call .new method on created AMM contract. The simplest way to do this is using NEAR CLI.
 
+`clean.sh` can come in handy if you want to delete recently created accounts. `redeploy.sh` may be useful if you want to redeploy the AMM contract with its account.
+
 ## Testing
 Since `near-sdk-sim` is deprecated, integration tests are made with `workspaces-rs`. It uses `tokio.rs`, so tests are async. Right now test are a little bit overcomplicated and bloated, also they test only "happy path". They're located at [tests](https://github.com/kstepanovdev/amm-near/tree/master/tests). To run tests you probably want to use `sh test.sh`, but simple `cargo test` is possible (NB: if you changed the contract, be sure you rebuilt it). If you want to get something from `println!` macro inside your tests, use `cargo test -- --nocapture`.
 
