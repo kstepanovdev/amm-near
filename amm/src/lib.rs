@@ -5,7 +5,6 @@ use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::UnorderedMap;
 use near_sdk::json_types::U128;
-use near_sdk::serde_json::{self, json};
 use near_sdk::{
     env, ext_contract, log, near_bindgen, AccountId, Balance, Gas, PanicOnDefault, Promise,
     PromiseOrValue,
@@ -38,9 +37,9 @@ pub struct TokenInfo {
 // }
 // impl TickerInfo {
 //     fn update(&mut self, ratio: f64) {
-//         (self.ratio, self.ratio_direction, self.percentage) = match ratio.total_cmp(&self.ratio) {
+//         (self.ratio, self.ratio_direction, self.percentage) = match ratio.total_cmp(&s&elf.ratio) {
 //             std::cmp::Ordering::Equal => (ratio, TokenRate::Unchanged, 0.0),
-//             std::cmp::Ordering::Less => (&ratio, TokenRate::Decreased, self.ratio / ratio),
+//             std::cmp::Ordering::Less => (&ratio, TokenRate::Decreased, self.ratio / r&atio),
 //             std::cmp::Ordering::Greater => (ratio, Tok&enRate::Increased, ratio / self.ratio),
 //         }
 //     }
@@ -139,17 +138,6 @@ impl AMM {
         }
     }
 
-    fn update_tokens_ratio(&mut self) {
-        self.tokens_ratio = 0.0;
-        for (_token_addr, info) in self.tokens.iter() {
-            if self.tokens_ratio == 0.0 {
-                self.tokens_ratio = info.balance as f64;
-            } else {
-                self.tokens_ratio = self.tokens_ratio as f64 / info.balance as f64;
-            }
-        }
-    }
-
     pub fn info(&self) -> String {
         let mut res = "".to_string();
         for (token_addr, token_info) in &self.tokens {
@@ -161,7 +149,7 @@ impl AMM {
                 .as_str(),
             );
         }
-        res.push_str(format!("Tokens ratio: {}", self.tokens_ratio).as_str());
+        res.push_str(format!("Tokens ratio: {}. Ratio: {}", self.tokens_ratio, self.k).as_str());
         res
     }
 }
@@ -179,21 +167,27 @@ impl FungibleTokenReceiver for AMM {
         // Get tokens' accounts.
         let buy_token = AccountId::new_unchecked(msg);
         let sell_token = loop {
-            if let Some(token_id) = self.tokens.keys().next() {
-                if token_id != buy_token {
-                    break token_id;
+            match self.tokens.iter().next() {
+                Some((token_id, _token_info)) => {
+                    if token_id != buy_token {
+                        break token_id;
+                    }
                 }
-            } else {
-                panic!("Second token account cannot be found")
+                None => {
+                    panic!("Second token account cannot be found")
+                }
             }
         };
 
-        if sender_id == self.owner_id {
-            let sell_token_balance = self.tokens.get(&sell_token).unwrap().balance + amount;
-            let buy_token_balance = self.tokens.get(&buy_token).unwrap().balance;
+        let mut sell_token_info = self.tokens.get(&sell_token).unwrap();
+        let mut buy_token_info = self.tokens.get(&buy_token).unwrap();
 
-            self.tokens.get(&sell_token).unwrap().balance = sell_token_balance;
-            self.k = buy_token_balance * sell_token_balance;
+        if sender_id == self.owner_id {
+            sell_token_info.balance += amount;
+            let buy_token_balance = buy_token_info.balance;
+            self.k = buy_token_balance * sell_token_info.balance;
+
+            self.tokens.insert(&sell_token, &sell_token_info);
         } else {
             // (x + a)(y - b) = xy
             // x = sell_token_balance, y = buy_token_balance, a = amount, b = unknown var
@@ -205,26 +199,17 @@ impl FungibleTokenReceiver for AMM {
             // sell_token_balance += amount
             // k aka xy remains the same
 
-            let TokenInfo {
-                name: _,
-                decimals: _,
-                balance,
-            } = self.tokens.get(&sell_token).unwrap();
-            let x = balance;
-
-            let TokenInfo {
-                name: _,
-                decimals: _,
-                balance,
-            } = self.tokens.get(&buy_token).unwrap();
-            let y = balance;
+            let x = sell_token_info.balance;
+            let y = buy_token_info.balance;
 
             // y - (k / (x + dx)). Then return decimals.
             let b = (amount * y) / (amount + x);
 
             // update balances
-            self.tokens.get(&sell_token).unwrap().balance += amount;
-            self.tokens.get(&buy_token).unwrap().balance -= b;
+            sell_token_info.balance += amount;
+            buy_token_info.balance -= b;
+            self.tokens.insert(&sell_token, &sell_token_info);
+            self.tokens.insert(&buy_token, &buy_token_info);
 
             // transfer buy_token to initializer of swap operation
             ext_ft::ext(buy_token).with_attached_deposit(1).ft_transfer(

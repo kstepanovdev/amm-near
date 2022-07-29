@@ -265,26 +265,17 @@ async fn deposit() -> anyhow::Result<()> {
 
     // deposit AMM account with 10_000 "A" coins. Later check it for consistency.
     let res = owner
-        .call(&worker, amm_contract.id(), "deposit")
+        .call(&worker, a_contract.id(), "ft_transfer_call")
         .args_json(serde_json::json!({
-            "token_addr": a_contract.id(),
-            "amount": U128(10000)
+            "receiver_id": amm_contract.id(),
+            "amount": U128(10000),
+            "msg": b_contract.id()
         }))?
         .gas(300_000_000_000_000)
+        .deposit(1)
         .transact()
         .await?;
     assert!(res.is_success());
-
-    // let res = bob.call(&worker, b_contract.id(), "ft_transfer")
-    //     .args_json(serde_json::json!({
-    //         "receiver_id": amm_contract.id(),
-    //         "amount": U128(10000)
-    //     }))?
-    //     .deposit(1)
-    //     .gas(300_000_000_000_000)
-    //     .transact()
-    //     .await?;
-    // assert!(res.is_success());
 
     let res: U128 = bob
         .call(&worker, a_contract.id(), "ft_balance_of")
@@ -297,39 +288,35 @@ async fn deposit() -> anyhow::Result<()> {
     assert_eq!(res, U128(10000));
 
     // deposit AMM account with 5_000 "B" coins. Later check it for consistency.
-    // let res = amm_contract.call(&worker, "deposit")
-    //     .args_json(serde_json::json!({
-    //         "token_addr": b_contract.id(),
-    //         "amount": U128(5000)
-    //     }))?
-    //     .deposit(1)
-    //     .gas(300_000_000_000_000)
-    //     .transact()
-    //     .await?;
-    // assert!(res.is_success());
+    let res = owner
+        .call(&worker, b_contract.id(), "ft_transfer_call")
+        .args_json(serde_json::json!({
+            "receiver_id": amm_contract.id(),
+            "amount": U128(5000),
+            "msg": a_contract.id()
+        }))?
+        .gas(300_000_000_000_000)
+        .deposit(1)
+        .transact()
+        .await?;
+    assert!(res.is_success());
 
-    // let res: U128 = b_contract.call(&worker, "ft_balance_of")
-    //     .args_json(serde_json::json!({
-    //         "account_id": b_contract.id(),
-    //     }))?
-    //     .gas(300_000_000_000_000)
-    //     .view()
-    //     .await?
-    //     .json()?;
-    // assert_eq!(res, U128(5000));
+    let res: U128 = bob
+        .call(&worker, b_contract.id(), "ft_balance_of")
+        .args_json(serde_json::json!({
+            "account_id": amm_contract.id(),
+        }))?
+        .view()
+        .await?
+        .json()?;
+    assert_eq!(res, U128(5000));
 
-    // let res: String = owner
-    //     .call(&worker, amm_contract.id(), "info")
-    //     .gas(300_000_000_000_000)
-    //     .transact()
-    //     .await?
-    //     .json()?;
-    // let er = format!(
-    //     "Token address: {}. Token name: {}. Decimals: {}. Ticker: TBD. Balance: {}; Token address: {}. Token name: {}. Decimals: {}. Ticker: TBD. Balance: {}; Tokens ratio: 0",
-    //     a_contract.id(), "Example NEAR fungible token", 24, 50000,
-    //     b_contract.id(), "Example NEAR fungible token", 24, 20000,
-    // );
-    // assert_eq!(res, er);
+    let res: String = bob
+        .call(&worker, amm_contract.id(), "info")
+        .view()
+        .await?
+        .json()?;
+    println!("{}", res);
 
     Ok(())
 }
