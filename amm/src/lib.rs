@@ -66,7 +66,7 @@ pub enum TokenRate {
 #[ext_contract(ext_ft)]
 trait Contract {
     fn ft_metadata(&self) -> Promise;
-    fn ft_transfer(&self, receiver: AccountId, amount: U128, memo: Option<String>) -> Promise;
+    fn ft_transfer(&self, receiver_id: AccountId, amount: U128, memo: Option<String>) -> Promise;
     fn ft_balance_of(&self, account_id: AccountId) -> Promise;
     fn storage_deposit(&self, account_id: AccountId, registration_only: bool) -> Promise;
 }

@@ -43,7 +43,7 @@ near call token_b.$ID ft_transfer '{"receiver_id": "'$ID'", "amount": "10000"}' 
 
 # init AMM contract
 near call amm.$ID new '{
-    "owner_id": "amm.'$ID'",
+    "owner_id": "'$ID'",
     "a_contract": "token_a.'$ID'",
     "b_contract": "token_b.'$ID'"
 }' --accountId amm.$ID --gas 100000000000000;
