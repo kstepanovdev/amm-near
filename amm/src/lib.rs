@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::vec;
 
 use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
@@ -18,7 +19,6 @@ const MIN_STORAGE: Balance = 1_000_000_000_000_000_000_000_000;
 pub struct AMM {
     pub owner_id: AccountId,
     pub tokens: UnorderedMap<AccountId, TokenInfo>,
-    pub tokens_ratio: f64,
     pub k: u128,
 }
 
@@ -27,33 +27,37 @@ pub struct TokenInfo {
     name: String,
     decimals: u8,
     balance: u128,
+    ticker: TickerInfo,
 }
 
-// #[derive(Default, BorshSerialize, BorshDeserialize)]
-// pub struct TickerInfo {
-//     pub ratio_direction: TokenRate,
-//     pub percentage: f64,
-//     pub ratio: f64,
-// }
-// impl TickerInfo {
-//     fn update(&mut self, ratio: f64) {
-//         (self.ratio, self.ratio_direction, self.percentage) = match ratio.total_cmp(&s&elf.ratio) {
-//             std::cmp::Ordering::Equal => (ratio, TokenRate::Unchanged, 0.0),
-//             std::cmp::Ordering::Less => (&ratio, TokenRate::Decreased, self.ratio / r&atio),
-//             std::cmp::Ordering::Greater => (ratio, Tok&enRate::Increased, ratio / self.ratio),
-//         }
-//     }
-// }
-// impl Display for TickerInfo {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let direction_symbol = match self.ratio_direction {
-//             TokenRate::Unchanged => "=",
-//             TokenRate::Decreased => "v",
-//             TokenRate::Increased => "^",
-//         };
-//         write!(f, "({}, {})", direction_symbol, self.percentage)
-//     }
-// }
+#[derive(Default, BorshSerialize, BorshDeserialize)]
+pub struct TickerInfo {
+    pub change_direction: TokenRate,
+    pub percentage: f64,
+    pub change: f64,
+}
+impl TickerInfo {
+    fn update(&mut self, change: f64) {
+        if change > 1.0 {
+            self.change_direction = TokenRate::Decreased;
+            self.percentage = change / self.change;
+        } else {
+            self.change_direction = TokenRate::Increased;
+            self.percentage = self.change / change;
+        }
+        self.change = change;
+    }
+}
+impl Display for TickerInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let direction_symbol = match self.change_direction {
+            TokenRate::Unchanged => "=",
+            TokenRate::Decreased => "v",
+            TokenRate::Increased => "^",
+        };
+        write!(f, "({}, {})", direction_symbol, self.percentage)
+    }
+}
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub enum TokenRate {
@@ -97,6 +101,7 @@ impl AMM {
             name: meta.name,
             decimals: meta.decimals,
             balance: 0_u128,
+            ticker: TickerInfo::default(),
         };
         self.tokens.insert(account_id, &token_info);
     }
@@ -122,7 +127,6 @@ impl AMM {
         let mut this = Self {
             owner_id,
             tokens,
-            tokens_ratio: 0.0,
             k: 0,
         };
         this.get_metadata();
@@ -143,13 +147,17 @@ impl AMM {
         for (token_addr, token_info) in &self.tokens {
             res.push_str(
                 format!(
-                    "Token address: {}. Token name: {}. Decimals: {}. Ticker: TBD. Balance: {:?}; ",
-                    token_addr, token_info.name, token_info.decimals, token_info.balance
+                    "Token address: {}. Token name: {}. Decimals: {}. Ticker: {}. Balance: {:?}; ",
+                    token_addr,
+                    token_info.name,
+                    token_info.decimals,
+                    token_info.ticker,
+                    token_info.balance
                 )
                 .as_str(),
             );
         }
-        res.push_str(format!("Tokens ratio: {}. Ratio: {}", self.tokens_ratio, self.k).as_str());
+        res.push_str(format!("Tokens ratio: {}", self.k).as_str());
         res
     }
 }
@@ -166,7 +174,7 @@ impl FungibleTokenReceiver for AMM {
 
         // Get tokens' accounts.
         let accounts = msg
-            .split(';')
+            .split(':')
             .map(|x| AccountId::new_unchecked(x.to_string()))
             .collect::<Vec<AccountId>>();
         let sell_token = &accounts[0];
@@ -177,8 +185,7 @@ impl FungibleTokenReceiver for AMM {
 
         if sender_id == self.owner_id {
             sell_token_info.balance += amount;
-            let buy_token_balance = buy_token_info.balance;
-            self.k = buy_token_balance * sell_token_info.balance;
+            self.k = buy_token_info.balance * sell_token_info.balance;
 
             self.tokens.insert(sell_token, &sell_token_info);
         } else {
@@ -194,15 +201,18 @@ impl FungibleTokenReceiver for AMM {
 
             let x = sell_token_info.balance;
             let y = buy_token_info.balance;
-
-            // y - (k / (x + dx)). Then return decimals.
             let b = (amount * y) / (amount + x);
+
+            log!("x: {}, y: {}, amount: {}, b: {}", x, y, amount, b);
 
             // update balances
             sell_token_info.balance += amount;
             buy_token_info.balance -= b;
+
             self.tokens.insert(sell_token, &sell_token_info);
             self.tokens.insert(buy_token, &buy_token_info);
+
+            log!("amount to transfer: {}", b);
 
             // transfer buy_token to initializer of swap operation
             ext_ft::ext(buy_token.clone())

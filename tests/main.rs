@@ -213,29 +213,68 @@ async fn init_amm() -> anyhow::Result<()> {
 // #[tokio::test]
 // async fn get_info() -> anyhow::Result<()> {
 //     let worker = workspaces::sandbox().await?;
-//     let (owner, a_contract, b_contract, _, _, amm_contract) = init(&worker).await?;
+//     let (owner, a_contract, b_contract, alice, _bob, amm_contract) = init(&worker).await?;
 
-//     let res = amm_contract
-//         .call(&worker, "new")
-//         .args_json((owner.id(), a_contract.id(), b_contract.id()))?
+//     owner
+//         .call(&worker, amm_contract.id(), "new")
+//         .args_json(serde_json::json!({
+//             "owner_id": owner.id(),
+//             "a_contract": a_contract.id(),
+//             "b_contract": b_contract.id(),
+//         }))?
 //         .gas(300_000_000_000_000)
 //         .transact()
 //         .await?;
-//     assert!(res.is_success());
 
-//     let res: String = amm_contract
-//         .call(&worker, "info")
+//     // deposit AMM account with 20_000 "A" coins. Later check it for consistency.
+//     owner
+//         .call(&worker, a_contract.id(), "ft_transfer_call")
+//         .args_json(serde_json::json!({
+//             "receiver_id": amm_contract.id(),
+//             "amount": U128(20_000),
+//             "msg": format!("{}:{}", a_contract.id(), b_contract.id())
+//         }))?
 //         .gas(300_000_000_000_000)
+//         .deposit(1)
 //         .transact()
+//         .await?;
+
+//     // deposit AMM account with 5_000 "B" coins. Later check it for consistency.
+//     owner
+//         .call(&worker, b_contract.id(), "ft_transfer_call")
+//         .args_json(serde_json::json!({
+//             "receiver_id": amm_contract.id(),
+//             "amount": U128(5_000),
+//             "msg": format!("{}:{}", b_contract.id(), a_contract.id())
+
+//         }))?
+//         .gas(300_000_000_000_000)
+//         .deposit(1)
+//         .transact()
+//         .await?;
+
+//     // swap 800 "B" tokens for 2758 "A" tokens
+//     alice
+//         .call(&worker, b_contract.id(), "ft_transfer_call")
+//         .args_json(serde_json::json!({
+//             "receiver_id": amm_contract.id(),
+//             "amount": U128(800),
+//             "msg": format!("{}:{}", b_contract.id(), a_contract.id())
+//         }))?
+//         .gas(300_000_000_000_000)
+//         .deposit(1)
+//         .transact()
+//         .await?;
+
+//     let res: String = owner
+//         .call(&worker, amm_contract.id(), "info")
+//         .view()
 //         .await?
 //         .json()?;
-//     let er = format!(
-//         "Token address: {}. Token name: {}. Decimals: {}. Ticker: TBD. Balance: {}; Token address: {}. Token name: {}. Decimals: {}. Ticker: TBD. Balance: {}; Tokens ratio: 0",
-//         a_contract.id(), "Example NEAR fungible token", 24, 50000,
-//         b_contract.id(), "Example NEAR fungible token", 24, 20000,
-//     );
 
-//     assert_eq!(res, er);
+//     // let er = "Token address: dev-20220801134143-24775822577510. Token name: Example NEAR fungible token. Decimals: 24. Ticker: TBD. Balance: 17242; Token address: dev-20220801134147-70868584570721. Token name: Example NEAR fungible token. Decimals: 24. Ticker: TBD. Balance: 5800; Tokens ratio: 0. Ratio: 100000000"
+//     assert_eq!(res, "");
+
 //     Ok(())
 // }
 
@@ -262,7 +301,7 @@ async fn deposit() -> anyhow::Result<()> {
         .args_json(serde_json::json!({
             "receiver_id": amm_contract.id(),
             "amount": U128(10000),
-            "msg": format!("{};{}", a_contract.id(), b_contract.id())
+            "msg": format!("{}:{}", a_contract.id(), b_contract.id())
         }))?
         .gas(300_000_000_000_000)
         .deposit(1)
@@ -286,7 +325,7 @@ async fn deposit() -> anyhow::Result<()> {
         .args_json(serde_json::json!({
             "receiver_id": amm_contract.id(),
             "amount": U128(5000),
-            "msg": format!("{};{}", a_contract.id(), b_contract.id())
+            "msg": format!("{}:{}", a_contract.id(), b_contract.id())
         }))?
         .gas(300_000_000_000_000)
         .deposit(1)
@@ -336,7 +375,7 @@ async fn swap() -> anyhow::Result<()> {
         .args_json(serde_json::json!({
             "receiver_id": amm_contract.id(),
             "amount": U128(20_000),
-            "msg": format!("{};{}", a_contract.id(), b_contract.id())
+            "msg": format!("{}:{}", a_contract.id(), b_contract.id())
         }))?
         .gas(300_000_000_000_000)
         .deposit(1)
@@ -349,7 +388,7 @@ async fn swap() -> anyhow::Result<()> {
         .args_json(serde_json::json!({
             "receiver_id": amm_contract.id(),
             "amount": U128(5_000),
-            "msg": format!("{};{}", b_contract.id(), a_contract.id())
+            "msg": format!("{}:{}", b_contract.id(), a_contract.id())
 
         }))?
         .gas(300_000_000_000_000)
@@ -363,7 +402,7 @@ async fn swap() -> anyhow::Result<()> {
         .args_json(serde_json::json!({
             "receiver_id": amm_contract.id(),
             "amount": U128(800),
-            "msg": format!("{};{}", b_contract.id(), a_contract.id())
+            "msg": format!("{}:{}", b_contract.id(), a_contract.id())
         }))?
         .gas(300_000_000_000_000)
         .deposit(1)
