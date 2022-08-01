@@ -190,32 +190,25 @@ async fn init(
     Ok((owner, a_contract, b_contract, alice, bob, amm_contract))
 }
 
-// #[tokio::test]
-// async fn init_amm() -> anyhow::Result<()> {
-//     let worker = workspaces::sandbox().await?;
-//     let (
-//         owner,
-//         a_contract,
-//         b_contract,
-//         _alice,
-//         _bob,
-//         amm_contract,
-//         _amm
-//     ) = init(&worker).await?;
+#[tokio::test]
+async fn init_amm() -> anyhow::Result<()> {
+    let worker = workspaces::sandbox().await?;
+    let (owner, a_contract, b_contract, _alice, _bob, amm_contract) = init(&worker).await?;
 
-//     let res = amm_contract.call(&worker, "new")
-//         .args_json(serde_json::json!({
-//             "owner_id": owner.id(),
-//             "a_contract": a_contract.id(),
-//             "b_contract": b_contract.id(),
-//         }))?
-//         .gas(300_000_000_000_000)
-//         .transact()
-//         .await?;
-//     assert!(res.is_success());
+    let res = amm_contract
+        .call(&worker, "new")
+        .args_json(serde_json::json!({
+            "owner_id": owner.id(),
+            "a_contract": a_contract.id(),
+            "b_contract": b_contract.id(),
+        }))?
+        .gas(300_000_000_000_000)
+        .transact()
+        .await?;
+    assert!(res.is_success());
 
-//     Ok(())
-// }
+    Ok(())
+}
 
 // #[tokio::test]
 // async fn get_info() -> anyhow::Result<()> {
@@ -269,7 +262,7 @@ async fn deposit() -> anyhow::Result<()> {
         .args_json(serde_json::json!({
             "receiver_id": amm_contract.id(),
             "amount": U128(10000),
-            "msg": b_contract.id()
+            "msg": format!("{};{}", a_contract.id(), b_contract.id())
         }))?
         .gas(300_000_000_000_000)
         .deposit(1)
@@ -293,7 +286,7 @@ async fn deposit() -> anyhow::Result<()> {
         .args_json(serde_json::json!({
             "receiver_id": amm_contract.id(),
             "amount": U128(5000),
-            "msg": a_contract.id()
+            "msg": format!("{};{}", a_contract.id(), b_contract.id())
         }))?
         .gas(300_000_000_000_000)
         .deposit(1)
@@ -317,6 +310,107 @@ async fn deposit() -> anyhow::Result<()> {
         .await?
         .json()?;
     println!("{}", res);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn swap() -> anyhow::Result<()> {
+    let worker = workspaces::sandbox().await?;
+    let (owner, a_contract, b_contract, alice, _bob, amm_contract) = init(&worker).await?;
+
+    owner
+        .call(&worker, amm_contract.id(), "new")
+        .args_json(serde_json::json!({
+            "owner_id": owner.id(),
+            "a_contract": a_contract.id(),
+            "b_contract": b_contract.id(),
+        }))?
+        .gas(300_000_000_000_000)
+        .transact()
+        .await?;
+
+    // deposit AMM account with 20_000 "A" coins. Later check it for consistency.
+    owner
+        .call(&worker, a_contract.id(), "ft_transfer_call")
+        .args_json(serde_json::json!({
+            "receiver_id": amm_contract.id(),
+            "amount": U128(20_000),
+            "msg": format!("{};{}", a_contract.id(), b_contract.id())
+        }))?
+        .gas(300_000_000_000_000)
+        .deposit(1)
+        .transact()
+        .await?;
+
+    // deposit AMM account with 5_000 "B" coins. Later check it for consistency.
+    owner
+        .call(&worker, b_contract.id(), "ft_transfer_call")
+        .args_json(serde_json::json!({
+            "receiver_id": amm_contract.id(),
+            "amount": U128(5_000),
+            "msg": format!("{};{}", b_contract.id(), a_contract.id())
+
+        }))?
+        .gas(300_000_000_000_000)
+        .deposit(1)
+        .transact()
+        .await?;
+
+    // swap 800 "B" tokens for 2758 "A" tokens
+    alice
+        .call(&worker, b_contract.id(), "ft_transfer_call")
+        .args_json(serde_json::json!({
+            "receiver_id": amm_contract.id(),
+            "amount": U128(800),
+            "msg": format!("{};{}", b_contract.id(), a_contract.id())
+        }))?
+        .gas(300_000_000_000_000)
+        .deposit(1)
+        .transact()
+        .await?;
+
+    // check Alice's balances
+    let res: U128 = alice
+        .call(&worker, a_contract.id(), "ft_balance_of")
+        .args_json(serde_json::json!({
+            "account_id": alice.id(),
+        }))?
+        .view()
+        .await?
+        .json()?;
+    assert_eq!(res, U128(502_758));
+
+    let res: U128 = alice
+        .call(&worker, b_contract.id(), "ft_balance_of")
+        .args_json(serde_json::json!({
+            "account_id": alice.id(),
+        }))?
+        .view()
+        .await?
+        .json()?;
+    assert_eq!(res, U128(19_200));
+
+    // check AMM's balances
+    let res: U128 = owner
+        .call(&worker, a_contract.id(), "ft_balance_of")
+        .args_json(serde_json::json!({
+            "account_id": amm_contract.id(),
+        }))?
+        .view()
+        .await?
+        .json()?;
+    assert_eq!(res, U128(17_242));
+
+    let res: U128 = owner
+        .call(&worker, b_contract.id(), "ft_balance_of")
+        .args_json(serde_json::json!({
+            "account_id": amm_contract.id(),
+        }))?
+        .view()
+        .await?
+        .json()?;
+    assert_eq!(res, U128(5_800));
 
     Ok(())
 }
