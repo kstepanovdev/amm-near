@@ -381,16 +381,6 @@ async fn swap() -> anyhow::Result<()> {
         .json()?;
     assert_eq!(res, U128(502_758));
 
-    let res: U128 = alice
-        .call(&worker, b_contract.id(), "ft_balance_of")
-        .args_json(serde_json::json!({
-            "account_id": alice.id(),
-        }))?
-        .view()
-        .await?
-        .json()?;
-    assert_eq!(res, U128(19_200));
-
     // check AMM's balances
     let res: U128 = owner
         .call(&worker, a_contract.id(), "ft_balance_of")
